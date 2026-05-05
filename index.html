@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Analyzer — 5-Prompt Stack</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2a2d3d;
+      --accent: #6c63ff;
+      --accent2: #00d4aa;
+      --text: #e8eaf0;
+      --muted: #8b8fa8;
+      --tag-bg: #252840;
+      --copy-bg: #232638;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      padding: 2rem 1rem 4rem;
+    }
+
+    .container { max-width: 860px; margin: 0 auto; }
+
+    /* Header */
+    header { text-align: center; margin-bottom: 2.5rem; }
+    header h1 {
+      font-size: clamp(1.6rem, 4vw, 2.4rem);
+      font-weight: 700;
+      background: linear-gradient(135deg, #6c63ff, #00d4aa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.4rem;
+    }
+    header p { color: var(--muted); font-size: 0.95rem; }
+
+    /* Inputs */
+    .input-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    .input-panel h2 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 1rem;
+    }
+    .inputs-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.75rem;
+    }
+    .input-group label {
+      display: block;
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-bottom: 0.3rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .input-group input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 1rem;
+      font-weight: 600;
+      padding: 0.6rem 0.75rem;
+      outline: none;
+      transition: border-color 0.2s;
+      text-transform: uppercase;
+    }
+    .input-group input::placeholder { font-weight: 400; text-transform: none; color: #444; }
+    .input-group input:focus { border-color: var(--accent); }
+
+    .run-btn {
+      margin-top: 1rem;
+      width: 100%;
+      background: linear-gradient(135deg, var(--accent), #5a52e0);
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      padding: 0.75rem;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+      letter-spacing: 0.03em;
+    }
+    .run-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+    .run-btn:active { transform: translateY(0); }
+
+    /* Progress bar */
+    .progress-row {
+      display: flex;
+      gap: 0.4rem;
+      margin-bottom: 1.5rem;
+    }
+    .progress-step {
+      flex: 1;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--border);
+      transition: background 0.3s;
+    }
+    .progress-step.done { background: var(--accent2); }
+    .progress-step.active { background: var(--accent); }
+
+    /* Cards */
+    .prompt-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      margin-bottom: 1.25rem;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+    .prompt-card:hover { border-color: #3a3d55; }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      gap: 1rem;
+    }
+    .card-header-left {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      min-width: 0;
+    }
+    .step-badge {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .step-badge.done { background: rgba(0,212,170,0.15); color: var(--accent2); }
+    .step-badge.active { background: rgba(108,99,255,0.2); color: var(--accent); }
+    .step-badge.idle { background: var(--tag-bg); color: var(--muted); }
+
+    .card-title-group { min-width: 0; }
+    .card-title {
+      font-size: 1rem;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .card-subtitle { font-size: 0.78rem; color: var(--muted); margin-top: 0.1rem; }
+
+    .card-actions { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+
+    .check-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      background: transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .check-btn.checked { border-color: var(--accent2); background: rgba(0,212,170,0.1); color: var(--accent2); }
+
+    .chevron {
+      color: var(--muted);
+      font-size: 0.8rem;
+      transition: transform 0.2s;
+    }
+    .chevron.open { transform: rotate(180deg); }
+
+    /* Prompt body */
+    .card-body { display: none; padding: 0 1.25rem 1.25rem; }
+    .card-body.open { display: block; }
+
+    .prompt-text {
+      background: var(--copy-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+      font-size: 0.82rem;
+      line-height: 1.65;
+      color: #c5c9e0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .prompt-text mark {
+      background: rgba(108,99,255,0.25);
+      color: #a89fff;
+      border-radius: 3px;
+      padding: 0 2px;
+    }
+
+    .copy-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 0.75rem;
+      gap: 0.5rem;
+    }
+    .copy-btn {
+      background: var(--tag-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.82rem;
+      font-weight: 500;
+      padding: 0.45rem 0.9rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .copy-btn:hover { background: #2e3150; border-color: var(--accent); color: var(--accent); }
+    .copy-btn.copied { border-color: var(--accent2); color: var(--accent2); }
+
+    /* Kill criteria */
+    .kill-box {
+      background: rgba(255,80,80,0.07);
+      border: 1px solid rgba(255,80,80,0.2);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 2rem;
+    }
+    .kill-box h3 { font-size: 0.85rem; color: #ff6b6b; margin-bottom: 0.5rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+    .kill-box ul { list-style: none; }
+    .kill-box li { font-size: 0.82rem; color: #c5c9e0; padding: 0.2rem 0; display: flex; gap: 0.5rem; }
+    .kill-box li::before { content: "✕"; color: #ff6b6b; flex-shrink: 0; }
+
+    /* Comparison table */
+    .table-toggle {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      margin-bottom: 2rem;
+    }
+    .table-toggle-header {
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .comparison-table { display: none; padding: 0 1.25rem 1.25rem; overflow-x: auto; }
+    .comparison-table.open { display: block; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th { background: var(--tag-bg); color: var(--muted); padding: 0.6rem 0.75rem; text-align: left; font-weight: 600; }
+    td { padding: 0.55rem 0.75rem; border-top: 1px solid var(--border); color: #c5c9e0; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    .good { color: var(--accent2); font-weight: 600; }
+    .bad { color: #ff6b6b; font-weight: 600; }
+
+    /* Footer */
+    footer { text-align: center; margin-top: 3rem; color: var(--muted); font-size: 0.78rem; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>📈 5-Prompt Stock Analyzer</h1>
+    <p>Enter your ticker and run the full research stack in order</p>
+  </header>
+
+  <!-- Input Panel -->
+  <div class="input-panel">
+    <h2>Setup</h2>
+    <div class="inputs-row">
+      <div class="input-group">
+        <label>Ticker *</label>
+        <input type="text" id="ticker" placeholder="e.g. NVDA" maxlength="8" />
+      </div>
+      <div class="input-group">
+        <label>Peer 1</label>
+        <input type="text" id="peer1" placeholder="e.g. AMD" maxlength="8" />
+      </div>
+      <div class="input-group">
+        <label>Peer 2</label>
+        <input type="text" id="peer2" placeholder="e.g. INTC" maxlength="8" />
+      </div>
+      <div class="input-group">
+        <label>Current Price ($)</label>
+        <input type="text" id="price" placeholder="e.g. 138.50" style="text-transform:none;" />
+      </div>
+    </div>
+    <button class="run-btn" onclick="generatePrompts()">Generate All 5 Prompts →</button>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-row" id="progressRow">
+    <div class="progress-step" id="ps1"></div>
+    <div class="progress-step" id="ps2"></div>
+    <div class="progress-step" id="ps3"></div>
+    <div class="progress-step" id="ps4"></div>
+    <div class="progress-step" id="ps5"></div>
+  </div>
+
+  <!-- Prompt Cards -->
+  <div id="promptCards"></div>
+
+  <!-- Kill Criteria -->
+  <div class="kill-box">
+    <h3>🚨 Kill Criteria — Pass if any trigger fires</h3>
+    <ul>
+      <li>Prompt 2 scores &lt;50 (V1 REJECT)</li>
+      <li>Prompt 2 Moat fails (≤13/25)</li>
+      <li>Prompt 4 decay ≥65 with accelerating velocity</li>
+      <li>Prompt 3 ranks worst on valuation across all 3 peers</li>
+    </ul>
+  </div>
+
+  <!-- Comparison table -->
+  <div class="table-toggle">
+    <div class="table-toggle-header" onclick="toggleTable()">
+      <span>📊 Valuation Reference (Prompt 3 targets)</span>
+      <span class="chevron" id="tableChevron">▼</span>
+    </div>
+    <div class="comparison-table" id="comparisonTable">
+      <table>
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>Strong Signal</th>
+            <th>Neutral</th>
+            <th>Warning</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>PEG Ratio</td><td class="good">&lt;1.0 — underpriced growth</td><td>1.0–2.0</td><td class="bad">&gt;2.0 — overpriced</td></tr>
+          <tr><td>Price/FCF</td><td class="good">&lt;15x — strong floor</td><td>15–30x</td><td class="bad">&gt;40x — premium</td></tr>
+          <tr><td>Analyst Target Upside</td><td class="good">&gt;20% — room to run</td><td>10–20%</td><td class="bad">&lt;10% — near ceiling</td></tr>
+          <tr><td>Below 52-wk High</td><td class="good">&gt;30% — deep discount</td><td>10–30%</td><td class="bad">&lt;10% — near highs</td></tr>
+          <tr><td>FCF Margin</td><td class="good">&gt;15% — strong</td><td>5–15%</td><td class="bad">&lt;5% — survival risk</td></tr>
+          <tr><td>Decay Score (Prompt 4)</td><td class="good">&lt;55 — no short signal</td><td>55–64</td><td class="bad">≥65 — avoid long</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>Built on Albert @berttrading's 5-Prompt Stack · Run prompts in order · Verify numbers against filings before sizing</footer>
+
+</div>
+
+<script>
+  const PROMPTS = [
+    {
+      id: 1,
+      emoji: "🌤️",
+      title: "Weather Check",
+      subtitle: "Run once a week — know the tape before entering",
+      template: () => `Search recent financial news and FRED data. Give me a
+1-page regime read across 4 dimensions:
+
+1. TREND — Is SPY above or below its 50D and 200D MAs?
+   Is the 50D above or below the 200D? (This is the
+   single most important regime signal — it controls
+   whether I lean V1 quality compounders or V2
+   contrarian setups this week.)
+
+2. VOLATILITY — Current VIX vs 20-day average.
+   <15 = complacency, 15-22 = normal, 22-30 = fear,
+   30+ = panic. Which zone are we in?
+
+3. RATES — 10Y Treasury yield direction over the last
+   30 days. Cutting, pausing, or hiking? Flag if
+   rate-sensitive sectors (Utilities/XLU, REITs/XLRE)
+   are reacting — they often lead the yield curve.
+
+4. LEADERSHIP — Top 3 / Bottom 3 sectors over the last
+   30 days. Cyclical leadership (XLK, XLY, XLC) =
+   risk-on. Defensive leadership (XLP, XLU, XLV) =
+   risk-off.
+
+Call the regime — STRONG BULL, MODERATE BULL, CHOP,
+CORRECTION, BEAR, or RECOVERY. Finish with a 1-sentence
+verdict: BUY DIPS, SELL RIPS, or CASH IS A POSITION.`,
+    },
+    {
+      id: 2,
+      emoji: "🔍",
+      title: "Deep Dive",
+      subtitle: "Anchor prompt — run on every new ticker",
+      needsTicker: true,
+      template: (t) => `Run a deep research report on ${t} and score it
+across my V1 framework's 4 dimensions:
+
+1. GROWTH & MOMENTUM (35 pts): Revenue YoY + sequential
+   trend. Is growth accelerating or decelerating?
+   Earnings surprise history (last 4 quarters). Forward
+   guidance — raised, in-line, or cut?
+   (Acceleration matters more than absolute growth — a
+   stock going 8% → 14% beats one going 30% → 25%.)
+
+2. MOAT & QUALITY (25 pts): Top 3 competitors. Network
+   effects, switching costs, IP, or cost moat? Gross
+   margin level + trend (last 4 quarters).
+   ⚠️ Customer concentration check (10-K footnotes):
+   any single customer >25% of revenue? Top 3 >50%?
+   Critical for suppliers, semis, and component makers —
+   the moat lives on the customer's side of the table.
+
+3. DOWNSIDE PROTECTION (25 pts): Net cash vs net debt.
+   FCF margin % (>15% strong, <5% survival risk).
+   Price/FCF (<15x cheap floor, >40x premium).
+   Insider Form 4 buying or unscheduled selling — NOT
+   pre-planned 10b5-1 transactions (those aren't a
+   real signal).
+
+4. SENTIMENT & TIMING (15 pts): TipRanks top-rated
+   analyst stance ONLY (track-record analysts who beat
+   the S&P 500 — ignore broad consensus from unproven
+   names). Short interest. Institutional accumulation
+   or distribution. Contrarian setup or crowded trade?
+
+Give a final score /100 and tier:
+- 80+ HIGH conviction (rare — 3-5 names max)
+- 65-79 MEDIUM (standard position)
+- 50-64 WATCHLIST (half size or wait)
+- <50 V1 REJECT (no long position)
+
+Finish with a 3-sentence asymmetric thesis. Cite sources.`,
+    },
+    {
+      id: 3,
+      emoji: "⚖️",
+      title: "Peer Comparison",
+      subtitle: "Cheap only matters relative to growth",
+      needsTicker: true,
+      needsPeers: true,
+      template: (t, p1, p2) => `Search Yahoo Finance, Macrotrends, and TipRanks. Build a
+relative valuation table for ${t} vs ${p1} and ${p2}.
+
+Columns:
+- Forward PE
+- PEG ratio (forward PE ÷ expected growth)
+- Price/FCF
+- Analyst price target upside %
+- Distance below 52-week high %
+- YoY revenue growth (latest quarter)
+- Gross margin (latest quarter)
+
+My V1 valuation rules:
+- PEG <1.0 = growth significantly underpriced (rare)
+- Price/FCF <15x = strong cash-flow floor
+- Target upside >20% = real room to run before consensus ceiling
+- >30% below 52-week high = deep contrarian discount
+
+Rank all 3 best → worst. The winner has the best combo of
+cheap valuation + room to run + cash-flow floor.
+
+⚠️ Skip PEG entirely for cyclical/commodity names (Energy,
+Materials, Mining) — trough earnings make it meaningless.
+Use target upside + Price/FCF only for those.`,
+    },
+    {
+      id: 4,
+      emoji: "🐻",
+      title: "Bear Case",
+      subtitle: "If you can't find 3 reasons to be bearish, you haven't done the work",
+      needsTicker: true,
+      template: (t) => `Act as a skeptical short-seller researching ${t}.
+Search SEC filings, earnings transcripts, and recent news.
+Score narrative decay across my 4-dimension framework:
+
+1. GROWTH DETERIORATION (35 pts): Revenue deceleration
+   rate. Sequential declines masked by YoY framing.
+   Guidance cuts or hedging language. Bookings, backlog,
+   or pipeline shrinking?
+
+2. MARGIN & CASH FLOW EROSION (25 pts): Gross AND
+   operating margin compression (last 4 quarters).
+   FCF deterioration. ⚠️ Capex divergence — spending
+   INTO a slowdown is the most dangerous signal in
+   the framework.
+
+3. VALUATION DISCONNECT (25 pts): Premium valuation
+   while fundamentals deteriorate. Implied growth vs
+   actual delivery. Trading at the top of the historical
+   valuation range while fundamentals are at the bottom?
+
+4. INSIDER & BEHAVIORAL (15 pts): Unscheduled Form 4
+   selling — NOT 10b5-1 pre-planned. Widening GAAP vs
+   non-GAAP gap ("adjusted" metrics inflating reality).
+   Narrative inflation in earnings calls. Rising short
+   interest. Estimate dispersion widening.
+
+Total /100. Then assess DECAY VELOCITY — is decay
+ACCELERATING (worse than last quarter), STABLE, or
+DECELERATING (stabilizing → maybe bottoming)?
+
+Decay tiers:
+- 80+ + accelerating = high-conviction short via put LEAPS
+- 65-79 = medium-conviction short, defined-risk only
+- 55-64 = avoid the long, not enough for an active short
+- <55 = no short signal — decay may be stabilizing
+
+Cite sources. Finish with 1 invalidation trigger: what
+would force you to abandon the short thesis?`,
+    },
+    {
+      id: 5,
+      emoji: "⏱️",
+      title: "Exit Timer",
+      subtitle: "Write the exit plan before you click buy",
+      needsTicker: true,
+      needsPrice: true,
+      template: (t, p1, p2, price) => `For ${t} at current price [$${price}], build me a 3-leg
+exit plan assuming I enter today:
+
+1. INVALIDATION (stop): Which technical level, if broken
+   on a daily close, tells me the long thesis is wrong?
+   Price + reasoning. (V1 hard rule: I also exit any
+   long the moment its decay score crosses 65 — no
+   argument, no rationalizing.)
+
+2. FIRST TARGET (trim 1/3): Which resistance level is
+   the most logical first trim? Price + reasoning.
+
+3. RUNNER TARGET (let rest ride): Next major resistance
+   or measured-move target above the first? Price +
+   reasoning.
+
+⚠️ Binary catalyst check (next 90 days only): Search next
+earnings date + any CONFIRMED binary events — FDA PDUFA
+decisions, scheduled court rulings, analyst day, guidance
+updates. IGNORE vague "product launches" and "partnerships"
+without confirmed dates — they're either priced in or fizzle.
+
+If a confirmed binary event is within 30 days → use
+defined-risk options (calls or LEAPS) instead of shares.
+Trim before the event or hold through? Tell me which
+and why.`,
+    },
+  ];
+
+  let completed = new Set();
+
+  function val(id) {
+    return (document.getElementById(id).value.trim().toUpperCase() || id.toUpperCase());
+  }
+
+  function generatePrompts() {
+    const ticker = document.getElementById('ticker').value.trim().toUpperCase();
+    if (!ticker) {
+      document.getElementById('ticker').focus();
+      document.getElementById('ticker').style.borderColor = '#ff6b6b';
+      setTimeout(() => document.getElementById('ticker').style.borderColor = '', 1500);
+      return;
+    }
+
+    const peer1 = document.getElementById('peer1').value.trim().toUpperCase() || '[PEER 1]';
+    const peer2 = document.getElementById('peer2').value.trim().toUpperCase() || '[PEER 2]';
+    const price = document.getElementById('price').value.trim() || 'XX.XX';
+
+    const container = document.getElementById('promptCards');
+    container.innerHTML = '';
+
+    PROMPTS.forEach((p, idx) => {
+      let promptText;
+      if (p.id === 1) promptText = p.template();
+      else if (p.id === 3) promptText = p.template(ticker, peer1, peer2);
+      else if (p.id === 5) promptText = p.template(ticker, peer1, peer2, price);
+      else promptText = p.template(ticker);
+
+      const highlighted = highlightTicker(promptText, ticker, peer1, peer2, price);
+
+      const card = document.createElement('div');
+      card.className = 'prompt-card';
+      card.id = `card-${p.id}`;
+
+      card.innerHTML = `
+        <div class="card-header" onclick="toggleCard(${p.id})">
+          <div class="card-header-left">
+            <div class="step-badge idle" id="badge-${p.id}">${p.emoji}</div>
+            <div class="card-title-group">
+              <div class="card-title">${p.id}. ${p.title}</div>
+              <div class="card-subtitle">${p.subtitle}</div>
+            </div>
+          </div>
+          <div class="card-actions">
+            <button class="check-btn" id="check-${p.id}" onclick="toggleDone(event, ${p.id})" title="Mark done">✓</button>
+            <span class="chevron" id="chev-${p.id}">▼</span>
+          </div>
+        </div>
+        <div class="card-body" id="body-${p.id}">
+          <div class="prompt-text" id="text-${p.id}">${highlighted}</div>
+          <div class="copy-row">
+            <button class="copy-btn" id="copybtn-${p.id}" onclick="copyPrompt(${p.id})">
+              <span>⎘</span> Copy Prompt
+            </button>
+          </div>
+        </div>
+      `;
+      container.appendChild(card);
+    });
+
+    // Auto-open first card
+    toggleCard(1);
+    updateProgress();
+  }
+
+  function highlightTicker(text, ticker, peer1, peer2, price) {
+    const escaped = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    const terms = [ticker];
+    if (peer1 !== '[PEER 1]') terms.push(peer1);
+    if (peer2 !== '[PEER 2]') terms.push(peer2);
+    if (price !== 'XX.XX') terms.push(price);
+
+    let result = escaped;
+    terms.forEach(term => {
+      if (!term || term.startsWith('[')) return;
+      const re = new RegExp(`\\b${term}\\b`, 'g');
+      result = result.replace(re, `<mark>${term}</mark>`);
+    });
+    return result;
+  }
+
+  function getRawText(id) {
+    const ticker = document.getElementById('ticker').value.trim().toUpperCase();
+    const peer1 = document.getElementById('peer1').value.trim().toUpperCase() || '[PEER 1]';
+    const peer2 = document.getElementById('peer2').value.trim().toUpperCase() || '[PEER 2]';
+    const price = document.getElementById('price').value.trim() || 'XX.XX';
+    const p = PROMPTS.find(x => x.id === id);
+    if (p.id === 1) return p.template();
+    if (p.id === 3) return p.template(ticker, peer1, peer2);
+    if (p.id === 5) return p.template(ticker, peer1, peer2, price);
+    return p.template(ticker);
+  }
+
+  function toggleCard(id) {
+    const body = document.getElementById(`body-${id}`);
+    const chev = document.getElementById(`chev-${id}`);
+    if (!body) return;
+    const isOpen = body.classList.contains('open');
+    body.classList.toggle('open', !isOpen);
+    chev.classList.toggle('open', !isOpen);
+  }
+
+  function toggleDone(e, id) {
+    e.stopPropagation();
+    const btn = document.getElementById(`check-${id}`);
+    const badge = document.getElementById(`badge-${id}`);
+    if (completed.has(id)) {
+      completed.delete(id);
+      btn.classList.remove('checked');
+      badge.classList.remove('done');
+      badge.classList.add('idle');
+    } else {
+      completed.add(id);
+      btn.classList.add('checked');
+      badge.classList.remove('idle', 'active');
+      badge.classList.add('done');
+      // Auto-open next
+      const nextId = id + 1;
+      if (nextId <= 5) {
+        const nextBody = document.getElementById(`body-${nextId}`);
+        if (nextBody && !nextBody.classList.contains('open')) toggleCard(nextId);
+        document.getElementById(`badge-${nextId}`)?.classList.add('active');
+      }
+    }
+    updateProgress();
+  }
+
+  function updateProgress() {
+    for (let i = 1; i <= 5; i++) {
+      const el = document.getElementById(`ps${i}`);
+      if (completed.has(i)) el.className = 'progress-step done';
+      else if (i === Math.min(...[...Array(5)].map((_, j) => j + 1).filter(j => !completed.has(j)))) {
+        el.className = 'progress-step active';
+      } else {
+        el.className = 'progress-step';
+      }
+    }
+  }
+
+  async function copyPrompt(id) {
+    const text = getRawText(id);
+    const btn = document.getElementById(`copybtn-${id}`);
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.classList.add('copied');
+      btn.innerHTML = '<span>✓</span> Copied!';
+      setTimeout(() => {
+        btn.classList.remove('copied');
+        btn.innerHTML = '<span>⎘</span> Copy Prompt';
+      }, 2000);
+    } catch {
+      btn.innerHTML = 'Select all & copy manually';
+    }
+  }
+
+  function toggleTable() {
+    const t = document.getElementById('comparisonTable');
+    const c = document.getElementById('tableChevron');
+    t.classList.toggle('open');
+    c.classList.toggle('open');
+  }
+
+  // Allow Enter key on inputs
+  ['ticker','peer1','peer2','price'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') generatePrompts();
+    });
+  });
+</script>
+</body>
+</html>
