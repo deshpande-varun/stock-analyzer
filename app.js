@@ -137,6 +137,39 @@ function addSubagentCard(agentNum, label, result) {
 
 function toggleDetail(id) { qs(id).classList.toggle('open'); }
 
+function renderLiveBanner(ticker, d) {
+  const fmt = (n, pct) => {
+    if (n == null) return 'N/A';
+    if (pct) return (n * 100).toFixed(1) + '%';
+    if (Math.abs(n) >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+    if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    return Number(n).toFixed(2);
+  };
+  const changeSign = d.change1dPct >= 0 ? '+' : '';
+  const changeClass = d.change1dPct >= 0 ? 'live-up' : 'live-down';
+
+  const banner = el('div', { className: 'live-banner', id: 'liveBanner' },
+    el('div', { className: 'live-price' },
+      el('span', { className: 'live-ticker-label' }, ticker + ' '),
+      el('span', { className: 'live-price-num' }, '$' + fmt(d.price)),
+      el('span', { className: changeClass }, ` ${changeSign}${fmt(d.change1dPct, true)} today`)
+    ),
+    el('div', { className: 'live-chips' },
+      d.pe    != null ? el('div', { className: 'live-chip' }, el('span', { className: 'chip-label' }, 'P/E '), el('span', { className: 'chip-val' }, fmt(d.pe))) : null,
+      d.forwardPE != null ? el('div', { className: 'live-chip' }, el('span', { className: 'chip-label' }, 'Fwd P/E '), el('span', { className: 'chip-val' }, fmt(d.forwardPE))) : null,
+      d.mktCap != null ? el('div', { className: 'live-chip' }, el('span', { className: 'chip-label' }, 'MCap '), el('span', { className: 'chip-val' }, '$' + fmt(d.mktCap))) : null,
+      d.revenueGrowth != null ? el('div', { className: 'live-chip' }, el('span', { className: 'chip-label' }, 'Rev Growth '), el('span', { className: 'chip-val' }, fmt(d.revenueGrowth, true))) : null,
+      d.recommendationKey ? el('div', { className: 'live-chip' }, el('span', { className: 'chip-label' }, 'Analysts '), el('span', { className: 'chip-val' }, d.recommendationKey.toUpperCase())) : null,
+      d.targetMeanPrice != null ? el('div', { className: 'live-chip' }, el('span', { className: 'chip-label' }, 'Target '), el('span', { className: 'chip-val' }, '$' + fmt(d.targetMeanPrice))) : null,
+    ),
+    el('div', { className: 'live-source' }, '⚡ Live data · Yahoo Finance')
+  );
+
+  const resultsDiv = qs('results');
+  const statusBar  = resultsDiv.querySelector('.status-bar');
+  resultsDiv.insertBefore(banner, statusBar ? statusBar.nextSibling : resultsDiv.firstChild);
+}
+
 async function runAnalysis() {
   const ticker = qs('ticker').value.trim();
   if (!ticker) {
@@ -159,6 +192,10 @@ async function runAnalysis() {
   [1,2,3,4,5,'synth'].forEach(id => setAgentState(id, 'running'));
   setText('statusText', 'Zone Out: launching 4 parallel research agents...');
 
+  // Clear live banner from any prior run
+  const oldBanner = qs('liveBanner');
+  if (oldBanner) oldBanner.remove();
+
   let verdictText = '', verdictShown = false;
   const doneAgents = new Set();
 
@@ -171,7 +208,10 @@ async function runAnalysis() {
     if (!response.ok) throw new Error(`Server error: ${response.status}`);
 
     await readSSE(response, ({ eventType, payload }) => {
-      if (eventType === 'status') {
+      if (eventType === 'live') {
+        renderLiveBanner(ticker.toUpperCase(), payload);
+
+      } else if (eventType === 'status') {
         setText('statusText', payload.message);
         if (payload.message.includes('Zone In')) setAgentState('synth', 'running');
 

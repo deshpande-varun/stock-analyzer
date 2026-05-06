@@ -134,6 +134,43 @@ header p { color: var(--muted); font-size: 0.95rem; }
 .input-group input:focus { border-color: var(--accent); }
 .input-group input.price-input { text-transform: none; }
 
+/* ── Live data banner ──────────────────────────────────────────────────────── */
+.live-banner {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent2);
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+}
+.live-price {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+}
+.live-ticker-label { font-size: 0.82rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.live-price-num    { font-size: 1.35rem; font-weight: 800; color: var(--text); }
+.live-up           { font-size: 0.88rem; color: var(--accent2); font-weight: 600; }
+.live-down         { font-size: 0.88rem; color: var(--red); font-weight: 600; }
+.live-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+.live-chip {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.75rem;
+}
+.chip-label { color: var(--muted); }
+.chip-val   { color: var(--text); font-weight: 600; }
+.live-source { font-size: 0.68rem; color: var(--muted); opacity: 0.7; }
+
 /* ── Status bar & spinner ──────────────────────────────────────────────────── */
 #results { display: none; }
 

@@ -1,11 +1,156 @@
 require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
+const cors    = require('cors');
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static('.'));
+
+// ─── Yahoo Finance live data ──────────────────────────────────────────────────
+let _yf = null;
+async function getYF() {
+  if (_yf) return _yf;
+  const mod = await import('yahoo-finance2');
+  const YF  = mod.default;
+  _yf = new YF({ suppressNotices: ['yahooSurvey'] });
+  return _yf;
+}
+
+function fmt(n, pct = false) {
+  if (n == null) return 'N/A';
+  if (pct) return (n * 100).toFixed(1) + '%';
+  if (Math.abs(n) >= 1e9)  return (n / 1e9).toFixed(1) + 'B';
+  if (Math.abs(n) >= 1e6)  return (n / 1e6).toFixed(1) + 'M';
+  return n.toFixed(2);
+}
+
+async function fetchLiveData(ticker) {
+  try {
+    const yf = await getYF();
+    const [q, s] = await Promise.all([
+      yf.quote(ticker),
+      yf.quoteSummary(ticker, {
+        modules: ['summaryDetail','defaultKeyStatistics','financialData',
+                  'earningsTrend','upgradeDowngradeHistory','insiderTransactions'],
+      }),
+    ]);
+
+    const fd  = s.financialData        || {};
+    const ks  = s.defaultKeyStatistics || {};
+    const et  = s.earningsTrend?.trend || [];
+    const ins = s.insiderTransactions?.transactions?.slice(0, 8) || [];
+    const upgrades = (s.upgradeDowngradeHistory?.history || []).slice(0, 6);
+
+    // Net cash = cash - debt
+    const netCash = (fd.totalCash || 0) - (fd.totalDebt || 0);
+
+    // FCF margin = freeCashflow / totalRevenue
+    const fcfMargin = fd.freeCashflow && fd.totalRevenue
+      ? fd.freeCashflow / fd.totalRevenue : null;
+
+    // Price vs 52w range
+    const pricePct52w = q.fiftyTwoWeekHigh
+      ? ((q.regularMarketPrice - q.fiftyTwoWeekLow) / (q.fiftyTwoWeekHigh - q.fiftyTwoWeekLow) * 100)
+      : null;
+
+    // Upside to analyst target
+    const upside = fd.targetMeanPrice && q.regularMarketPrice
+      ? ((fd.targetMeanPrice - q.regularMarketPrice) / q.regularMarketPrice * 100)
+      : null;
+
+    // Unscheduled insider sells (exclude 10b5-1)
+    const insiderSells = ins.filter(t =>
+      t.transactionDescription?.toLowerCase().includes('sale') &&
+      !t.transactionDescription?.toLowerCase().includes('10b5')
+    ).length;
+
+    const recentUpgrades = upgrades.map(u =>
+      `${u.firm}: ${u.fromGrade || '?'} → ${u.toGrade || '?'} (${u.action})`
+    ).join(', ') || 'None';
+
+    return {
+      // Price & valuation
+      price:          q.regularMarketPrice,
+      change1dPct:    q.regularMarketChangePercent,
+      pe:             q.trailingPE,
+      forwardPE:      q.forwardPE,
+      eps:            q.epsTrailingTwelveMonths,
+      pegRatio:       ks.pegRatio,
+      priceToBook:    ks.priceToBook,
+      high52w:        q.fiftyTwoWeekHigh,
+      low52w:         q.fiftyTwoWeekLow,
+      pricePct52w:    pricePct52w,
+      mktCap:         q.marketCap,
+      beta:           q.beta,
+      // Growth
+      revenueGrowth:  fd.revenueGrowth,
+      earningsGrowth: fd.earningsGrowth,
+      grossMargins:   fd.grossMargins,
+      operatingMargins: fd.operatingMargins,
+      currentQtrEst:  et[0]?.earningsEstimate?.avg,
+      nextQtrEst:     et[1]?.earningsEstimate?.avg,
+      // Balance sheet & FCF
+      freeCashflow:   fd.freeCashflow,
+      fcfMargin:      fcfMargin,
+      totalCash:      fd.totalCash,
+      totalDebt:      fd.totalDebt,
+      netCash:        netCash,
+      currentRatio:   fd.currentRatio,
+      // Analyst & sentiment
+      targetMeanPrice:     fd.targetMeanPrice,
+      upsideTgt:           upside,
+      recommendationKey:   fd.recommendationKey,
+      analystCount:        fd.numberOfAnalystOpinions,
+      recentUpgrades,
+      shortPctFloat:       ks.shortPercentOfFloat,
+      shortRatio:          ks.shortRatio,
+      insiderUnschedSells: insiderSells,
+    };
+  } catch (e) {
+    console.error(`fetchLiveData(${ticker}) error:`, e.message);
+    return null;
+  }
+}
+
+function liveDataBlock(d, ticker) {
+  if (!d) return `⚠️ Live data unavailable for ${ticker} — use your knowledge.\n`;
+  return `
+━━━ LIVE MARKET DATA (real-time, Yahoo Finance) ━━━
+Ticker: ${ticker}
+Price:        $${fmt(d.price)}  (${fmt(d.change1dPct, false)}% today)
+52w Range:    $${fmt(d.low52w)} – $${fmt(d.high52w)}  (currently at ${fmt(d.pricePct52w)}% of range)
+Market Cap:   $${fmt(d.mktCap)}
+Beta:         ${fmt(d.beta)}
+
+VALUATION:
+  Trailing P/E:   ${fmt(d.pe)}       Forward P/E:  ${fmt(d.forwardPE)}
+  EPS (TTM):      $${fmt(d.eps)}     PEG Ratio:    ${fmt(d.pegRatio)}
+  Price/Book:     ${fmt(d.priceToBook)}
+
+GROWTH:
+  Revenue Growth (YoY): ${fmt(d.revenueGrowth, true)}
+  Earnings Growth (YoY):${fmt(d.earningsGrowth, true)}
+  Gross Margin:         ${fmt(d.grossMargins, true)}
+  Operating Margin:     ${fmt(d.operatingMargins, true)}
+  Next Qtr EPS Est:     $${fmt(d.currentQtrEst)}   Qtr+2: $${fmt(d.nextQtrEst)}
+
+BALANCE SHEET & CASH FLOW:
+  Free Cash Flow:  $${fmt(d.freeCashflow)}   FCF Margin: ${fmt(d.fcfMargin, true)}
+  Cash:  $${fmt(d.totalCash)}   Debt:  $${fmt(d.totalDebt)}   Net Cash: $${fmt(d.netCash)}
+  Current Ratio:   ${fmt(d.currentRatio)}
+
+ANALYST CONSENSUS:
+  Rating: ${(d.recommendationKey || 'N/A').toUpperCase()}  (${d.analystCount || 0} analysts)
+  Mean Target: $${fmt(d.targetMeanPrice)}  →  ${fmt(d.upsideTgt)}% upside from current price
+  Recent Actions: ${d.recentUpgrades}
+
+SENTIMENT:
+  Short % of Float: ${fmt(d.shortPctFloat, true)}   Short Ratio: ${fmt(d.shortRatio)} days
+  Unscheduled Insider Sells (recent): ${d.insiderUnschedSells}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+}
 
 const BEDROCK_BASE = process.env.ANTHROPIC_BEDROCK_BASE_URL;
 const AUTH_TOKEN   = process.env.ANTHROPIC_AUTH_TOKEN;
@@ -36,13 +181,16 @@ async function callClaude(messages, maxTokens = 1500) {
 
 // ─── Subagent prompts ─────────────────────────────────────────────────────────
 
-function growthPrompt(ticker) {
+function growthPrompt(ticker, live) {
   return `You are a quantitative research analyst. Analyze ${ticker} on Growth & Momentum.
 
-Score /35 based on:
-- Revenue YoY growth rate and sequential acceleration/deceleration
-- Earnings surprise history (last 4 quarters)
-- Forward guidance — raised, in-line, or cut?
+${liveDataBlock(live, ticker)}
+
+Score /35 based on the LIVE DATA above plus your knowledge:
+- Revenue YoY growth rate: is it accelerating or decelerating? (live: ${live ? fmt(live.revenueGrowth, true) : 'N/A'})
+- Earnings growth: ${live ? fmt(live.earningsGrowth, true) : 'N/A'} YoY
+- Forward EPS estimates: Q1 est $${live ? fmt(live.currentQtrEst) : 'N/A'}, Q2 est $${live ? fmt(live.nextQtrEst) : 'N/A'}
+- Gross margin trend: ${live ? fmt(live.grossMargins, true) : 'N/A'} — expanding or compressing?
 - Rule: acceleration > absolute level (8%→14% beats 30%→25%)
 
 Output format:
@@ -50,104 +198,116 @@ SCORE: [X/35]
 VERDICT: [ACCELERATING / STABLE / DECELERATING]
 
 KEY FINDINGS:
-- [finding 1]
-- [finding 2]
+- [finding 1 — cite live numbers]
+- [finding 2 — cite live numbers]
 - [finding 3]
 
-RISKS: [1-2 sentences]`;
+RISKS: [1-2 sentences referencing live data]`;
 }
 
-function moatPrompt(ticker) {
+function moatPrompt(ticker, live) {
   return `You are a competitive intelligence analyst. Analyze ${ticker} on Moat & Quality.
 
-Score /25 based on:
+${liveDataBlock(live, ticker)}
+
+Score /25 based on the LIVE DATA above plus your knowledge:
+- Gross margin ${live ? fmt(live.grossMargins, true) : 'N/A'} — what does this imply about pricing power?
+- Operating margin ${live ? fmt(live.operatingMargins, true) : 'N/A'} — sustainable or at risk?
 - Top 3 competitors and differentiation
 - Moat type: network effects, switching costs, IP, cost advantage, or none
-- Gross margin level + trend (last 4 quarters)
-- Customer concentration: any customer >25% revenue? Top 3 >50%?
+- Customer concentration risk
 
 Output format:
 SCORE: [X/25]
 MOAT TYPE: [Network Effects / Switching Costs / IP / Cost Advantage / Weak / None]
 
 KEY FINDINGS:
-- [finding 1]
+- [finding 1 — cite live margins]
 - [finding 2]
 - [finding 3]
 
 MOAT VERDICT: [WIDE / NARROW / NONE] — [1 sentence]`;
 }
 
-function downsidePrompt(ticker) {
+function downsidePrompt(ticker, live) {
   return `You are a balance sheet analyst. Analyze ${ticker} on Downside Protection.
 
-Score /25 based on:
-- Net cash vs net debt
-- FCF margin % (>15% strong, <5% survival risk)
-- Price/FCF (<15x cheap, >40x premium)
-- Insider Form 4 activity — unscheduled only, ignore 10b5-1
+${liveDataBlock(live, ticker)}
+
+Score /25 based on the LIVE DATA above:
+- Net cash position: $${live ? fmt(live.netCash) : 'N/A'} (cash $${live ? fmt(live.totalCash) : 'N/A'} minus debt $${live ? fmt(live.totalDebt) : 'N/A'})
+- FCF: $${live ? fmt(live.freeCashflow) : 'N/A'}  FCF Margin: ${live ? fmt(live.fcfMargin, true) : 'N/A'} (>15% = strong, <5% = risk)
+- Current ratio: ${live ? fmt(live.currentRatio) : 'N/A'}
+- Unscheduled insider sells: ${live?.insiderUnschedSells ?? 'N/A'} recent transactions
+- Forward P/E ${live ? fmt(live.forwardPE) : 'N/A'} — is valuation a margin of safety or a risk?
 
 Output format:
 SCORE: [X/25]
 BALANCE SHEET: [FORTRESS / HEALTHY / STRETCHED / DISTRESSED]
 
 KEY FINDINGS:
-- [finding 1]
-- [finding 2]
+- [finding 1 — cite live numbers]
+- [finding 2 — cite live numbers]
 - [finding 3]
 
-FCF VERDICT: [FCF margin %, Price/FCF, 1-sentence interpretation]`;
+FCF VERDICT: [FCF margin %, Price/FCF estimate, 1-sentence interpretation]`;
 }
 
-function sentimentPrompt(ticker) {
+function sentimentPrompt(ticker, live) {
   return `You are a market sentiment analyst. Analyze ${ticker} on Sentiment & Timing.
 
-Score /15 based on:
-- Top-rated analyst stance (track-record analysts only, not broad consensus)
-- Short interest as % of float
-- Institutional accumulation or distribution (13F filings)
-- Contrarian setup vs crowded trade
+${liveDataBlock(live, ticker)}
+
+Score /15 based on the LIVE DATA above:
+- Analyst consensus: ${live?.recommendationKey?.toUpperCase() || 'N/A'} from ${live?.analystCount || 0} analysts
+- Mean price target: $${live ? fmt(live.targetMeanPrice) : 'N/A'} = ${live ? fmt(live.upsideTgt) : 'N/A'}% upside
+- Recent analyst actions: ${live?.recentUpgrades || 'N/A'}
+- Short % of float: ${live ? fmt(live.shortPctFloat, true) : 'N/A'}  Short ratio: ${live ? fmt(live.shortRatio) : 'N/A'} days
+- Position in 52w range: ${live ? fmt(live.pricePct52w) : 'N/A'}% — entry timing signal
+- Beta: ${live ? fmt(live.beta) : 'N/A'}
 
 Output format:
 SCORE: [X/15]
 SETUP TYPE: [CONTRARIAN / NEUTRAL / CROWDED]
 
 KEY FINDINGS:
-- [finding 1]
-- [finding 2]
+- [finding 1 — cite live numbers]
+- [finding 2 — cite analyst data]
 - [finding 3]
 
-TIMING VERDICT: [GOOD ENTRY / WAIT / AVOID] — [1 sentence]`;
+TIMING VERDICT: [GOOD ENTRY / WAIT / AVOID] — [1 sentence with price context]`;
 }
 
-function bearPrompt(ticker) {
+function bearPrompt(ticker, live) {
   return `You are a skeptical short-seller. Build the bear case for ${ticker}.
 
-Score narrative decay /100:
-1. Growth Deterioration (35pts): revenue decel, guidance cuts, backlog shrinking
-2. Margin & Cash Flow Erosion (25pts): margin compression, FCF decay, capex into a slowdown
-3. Valuation Disconnect (25pts): premium valuation while fundamentals deteriorate
-4. Insider & Behavioral (15pts): unscheduled selling, GAAP vs non-GAAP gap, narrative inflation
+${liveDataBlock(live, ticker)}
+
+Score narrative decay /100 using the LIVE DATA above:
+1. Growth Deterioration (35pts): revenue growth ${live ? fmt(live.revenueGrowth, true) : 'N/A'} — is it slowing? Guidance risk?
+2. Margin & Cash Flow Erosion (25pts): gross margin ${live ? fmt(live.grossMargins, true) : 'N/A'}, FCF margin ${live ? fmt(live.fcfMargin, true) : 'N/A'} — compressing?
+3. Valuation Disconnect (25pts): Forward P/E ${live ? fmt(live.forwardPE) : 'N/A'}, PEG ${live ? fmt(live.pegRatio) : 'N/A'} — premium justified?
+4. Insider & Behavioral (15pts): ${live?.insiderUnschedSells ?? 0} unscheduled insider sells — red flag?
 
 Output format:
 DECAY SCORE: [X/100]
 DECAY VELOCITY: [ACCELERATING / STABLE / DECELERATING]
 
 TOP 3 BEAR ARGUMENTS:
-1. [argument]
-2. [argument]
+1. [argument citing live data]
+2. [argument citing live data]
 3. [argument]
 
 KILL CRITERIA TRIGGERED: [YES / NO] — [which ones if yes]
 INVALIDATION TRIGGER: [what single event kills the short thesis]`;
 }
 
-function synthPrompt(ticker, subagentResults) {
+function synthPrompt(ticker, subagentResults, live) {
   const { growth, moat, downside, sentiment, bear } = subagentResults;
   return `You are a chief investment officer. Synthesize this full research into a final verdict.
 
 TICKER: ${ticker}
-
+${liveDataBlock(live, ticker)}
 ━━━ SUBAGENT REPORTS ━━━
 
 [Agent 1 — Growth & Momentum]
@@ -497,20 +657,22 @@ app.post('/api/analyze-simple', async (req, res) => {
   const t = ticker.trim().toUpperCase();
 
   try {
+    const live = await fetchLiveData(t);
+
     const [growth, moat, downside, sentiment, bear] = await Promise.all([
-      callClaude([{ role: 'user', content: growthPrompt(t) }]),
-      callClaude([{ role: 'user', content: moatPrompt(t) }]),
-      callClaude([{ role: 'user', content: downsidePrompt(t) }]),
-      callClaude([{ role: 'user', content: sentimentPrompt(t) }]),
-      callClaude([{ role: 'user', content: bearPrompt(t) }]),
+      callClaude([{ role: 'user', content: growthPrompt(t, live) }]),
+      callClaude([{ role: 'user', content: moatPrompt(t, live) }]),
+      callClaude([{ role: 'user', content: downsidePrompt(t, live) }]),
+      callClaude([{ role: 'user', content: sentimentPrompt(t, live) }]),
+      callClaude([{ role: 'user', content: bearPrompt(t, live) }]),
     ]);
 
     const verdict = await callClaude(
-      [{ role: 'user', content: synthPrompt(t, { growth, moat, downside, sentiment, bear }) }],
+      [{ role: 'user', content: synthPrompt(t, { growth, moat, downside, sentiment, bear }, live) }],
       2500
     );
 
-    res.json({ ticker: t, verdict, subagents: { growth, moat, downside, sentiment, bear } });
+    res.json({ ticker: t, verdict, subagents: { growth, moat, downside, sentiment, bear }, live });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -534,41 +696,47 @@ app.post('/api/analyze', async (req, res) => {
   }
 
   try {
+    send('status', { message: 'Fetching live market data from Yahoo Finance...' });
+    const live = await fetchLiveData(t);
+    if (live) send('live', { price: live.price, change1dPct: live.change1dPct, pe: live.pe,
+      forwardPE: live.forwardPE, mktCap: live.mktCap, revenueGrowth: live.revenueGrowth,
+      recommendationKey: live.recommendationKey, targetMeanPrice: live.targetMeanPrice });
+
     send('status', { message: 'Zone Out: launching 4 parallel research agents...' });
 
     // Mark all agents running
     [1,2,3,4,5].forEach(n => send('agent_start', { agent: n }));
 
-    // Run 5 agents in parallel
+    // Run 5 agents in parallel — each receives live data
     const [growth, moat, downside, sentiment, bear] = await Promise.all([
-      callClaude([{ role: 'user', content: growthPrompt(t) }]).then(r => {
+      callClaude([{ role: 'user', content: growthPrompt(t, live) }]).then(r => {
         send('subagent', { agent: 1, label: 'Growth & Momentum', result: r });
         return r;
       }),
-      callClaude([{ role: 'user', content: moatPrompt(t) }]).then(r => {
+      callClaude([{ role: 'user', content: moatPrompt(t, live) }]).then(r => {
         send('subagent', { agent: 2, label: 'Moat & Quality', result: r });
         return r;
       }),
-      callClaude([{ role: 'user', content: downsidePrompt(t) }]).then(r => {
+      callClaude([{ role: 'user', content: downsidePrompt(t, live) }]).then(r => {
         send('subagent', { agent: 3, label: 'Downside Protection', result: r });
         return r;
       }),
-      callClaude([{ role: 'user', content: sentimentPrompt(t) }]).then(r => {
+      callClaude([{ role: 'user', content: sentimentPrompt(t, live) }]).then(r => {
         send('subagent', { agent: 4, label: 'Sentiment & Timing', result: r });
         return r;
       }),
-      callClaude([{ role: 'user', content: bearPrompt(t) }]).then(r => {
+      callClaude([{ role: 'user', content: bearPrompt(t, live) }]).then(r => {
         send('subagent', { agent: 5, label: 'Bear Case', result: r });
         return r;
       }),
     ]);
 
-    // Zone in: synthesizer
+    // Zone in: synthesizer also gets live data
     send('status', { message: 'Zone In: synthesizing final verdict...' });
     send('agent_start', { agent: 'synth' });
 
     const verdict = await callClaude(
-      [{ role: 'user', content: synthPrompt(t, { growth, moat, downside, sentiment, bear }) }],
+      [{ role: 'user', content: synthPrompt(t, { growth, moat, downside, sentiment, bear }, live) }],
       2500
     );
 
