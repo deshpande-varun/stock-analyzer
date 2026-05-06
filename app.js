@@ -17,6 +17,8 @@ let portfolioMode        = 'csv';
 let csvFile              = null;
 let screenshotFiles      = [];
 let portfolioStarted     = false;
+let cryptoStarted        = false;
+let iraStarted           = false;
 
 // ── DOM helpers ───────────────────────────────────────────────────────────────
 function qs(id) { return document.getElementById(id); }
@@ -85,19 +87,23 @@ async function readSSE(response, handler) {
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
 function switchTab(tab) {
-  ['single', 'portfolio', 'picks'].forEach(t => {
+  ['single', 'portfolio', 'picks', 'crypto', 'ira'].forEach(t => {
     const id = 'tab' + t.charAt(0).toUpperCase() + t.slice(1);
-    qs(id).classList.toggle('active', t === tab);
+    qs(id)?.classList.toggle('active', t === tab);
   });
   setDisplay('singlePanel',    tab === 'single'    ? '' : 'none');
   setDisplay('portfolioPanel', tab === 'portfolio' ? '' : 'none');
   setDisplay('picksPanel',     tab === 'picks'     ? '' : 'none');
+  setDisplay('cryptoPanel',    tab === 'crypto'    ? '' : 'none');
+  setDisplay('iraPanel',       tab === 'ira'       ? '' : 'none');
 
   if (tab !== 'single') setDisplay('results', 'none');
   else if (singleResultsVisible) setDisplay('results', 'block');
 
   setDisplay('portfolioResults', tab === 'portfolio' ? (portfolioStarted ? '' : 'none') : 'none');
   setDisplay('picksResults',     tab === 'picks'     ? (picksStarted     ? '' : 'none') : 'none');
+  setDisplay('cryptoResults',    tab === 'crypto'    ? (cryptoStarted    ? '' : 'none') : 'none');
+  setDisplay('iraResults',       tab === 'ira'       ? (iraStarted       ? '' : 'none') : 'none');
 }
 
 // ── Single stock analysis ─────────────────────────────────────────────────────
@@ -704,4 +710,162 @@ function renderTopPicks(picks) {
     );
     grid.appendChild(card);
   });
+}
+
+// ── Crypto Analysis ───────────────────────────────────────────────────────────
+async function runCryptoAnalysis() {
+  const symbol = qs('cryptoSymbol').value.trim().toUpperCase();
+  if (!symbol) {
+    qs('cryptoSymbol').focus();
+    qs('cryptoSymbol').style.borderColor = '#ff6b6b';
+    setTimeout(() => { qs('cryptoSymbol').style.borderColor = ''; }, 1500);
+    return;
+  }
+
+  cryptoStarted = true;
+  setDisplay('cryptoResults', 'block');
+  setDisplay('cryptoVerdict', 'none');
+  qs('cryptoVerdictContent').textContent = '';
+  qs('cryptoVerdictTicker').textContent  = symbol;
+  setDisplay('cryptoSpinner', '');
+  qs('cryptoBtn').disabled    = true;
+  qs('cryptoBtn').textContent = 'Analyzing...';
+  setText('cryptoStatusText', `Fetching live data for ${symbol}...`);
+
+  let verdictText = '', verdictShown = false;
+
+  try {
+    const response = await fetch(`${BACKEND}/api/crypto-analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol }),
+    });
+    if (!response.ok) throw new Error(`Server error: ${response.status}`);
+
+    await readSSE(response, ({ eventType, payload }) => {
+      if (eventType === 'live') {
+        const fmt = (n, pct) => {
+          if (n == null) return 'N/A';
+          if (pct) return (n * 100).toFixed(1) + '%';
+          if (Math.abs(n) >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+          if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+          return Number(n).toFixed(2);
+        };
+        const oldBanner = qs('cryptoLiveBanner');
+        if (oldBanner) oldBanner.remove();
+        const changeSign  = payload.change1dPct >= 0 ? '+' : '';
+        const changeClass = payload.change1dPct >= 0 ? 'live-up' : 'live-down';
+        const banner = el('div', { className: 'live-banner', id: 'cryptoLiveBanner' },
+          el('div', { className: 'live-price' },
+            el('span', { className: 'live-ticker-label' }, symbol + ' '),
+            el('span', { className: 'live-price-num' }, '$' + fmt(payload.price)),
+            el('span', { className: changeClass }, ` ${changeSign}${fmt(payload.change1dPct)}% today`)
+          ),
+          el('div', { className: 'live-chips' },
+            payload.mktCap != null ? el('div', { className: 'live-chip' }, el('span', { className: 'chip-label' }, 'MCap '), el('span', { className: 'chip-val' }, '$' + fmt(payload.mktCap))) : null,
+            payload.pricePct52w != null ? el('div', { className: 'live-chip' }, el('span', { className: 'chip-label' }, '52w pos '), el('span', { className: 'chip-val' }, fmt(payload.pricePct52w) + '%')) : null,
+            payload.low52w != null ? el('div', { className: 'live-chip' }, el('span', { className: 'chip-label' }, '52w low '), el('span', { className: 'chip-val' }, '$' + fmt(payload.low52w))) : null,
+            payload.high52w != null ? el('div', { className: 'live-chip' }, el('span', { className: 'chip-label' }, '52w high '), el('span', { className: 'chip-val' }, '$' + fmt(payload.high52w))) : null,
+          ),
+          el('div', { className: 'live-source' }, '⚡ Live data · Yahoo Finance')
+        );
+        qs('cryptoResults').insertBefore(banner, qs('cryptoStatus').nextSibling);
+
+      } else if (eventType === 'status') {
+        setText('cryptoStatusText', payload.message);
+
+      } else if (eventType === 'token') {
+        if (!verdictShown) { setDisplay('cryptoVerdict', 'block'); verdictShown = true; }
+        verdictText += payload.text;
+        qs('cryptoVerdictContent').textContent = verdictText;
+
+      } else if (eventType === 'done') {
+        const v   = detectVerdict(verdictText);
+        const box = qs('cryptoVerdict');
+        const bdg = qs('cryptoVerdictBadge');
+        box.className   = 'verdict-box ' + v;
+        bdg.className   = 'verdict-badge ' + v;
+        bdg.textContent = verdictLabel(v);
+        setText('cryptoStatusText', 'Analysis complete');
+        setDisplay('cryptoSpinner', 'none');
+
+      } else if (eventType === 'error') {
+        throw new Error(payload.message);
+      }
+    });
+  } catch (err) {
+    setText('cryptoStatusText', 'Error: ' + err.message);
+    setDisplay('cryptoSpinner', 'none');
+  } finally {
+    qs('cryptoBtn').disabled    = false;
+    qs('cryptoBtn').textContent = 'Analyze Crypto — AI Deep Dive →';
+  }
+}
+
+qs('cryptoSymbol').addEventListener('keydown', e => { if (e.key === 'Enter') runCryptoAnalysis(); });
+
+// ── IRA Advisor ───────────────────────────────────────────────────────────────
+async function runIraAdvisor() {
+  const profile = {
+    accountType:      qs('iraType').value,
+    totalValue:       qs('iraTotalValue').value.trim() || '0',
+    cashValue:        qs('iraCashValue').value.trim() || '0',
+    stocksValue:      String((parseFloat(qs('iraTotalValue').value) || 0) - (parseFloat(qs('iraCashValue').value) || 0)).slice(0, 10),
+    age:              qs('iraAge').value.trim(),
+    income:           qs('iraIncome').value.trim(),
+    yearsToRetirement: qs('iraYears').value.trim(),
+    holdings:         qs('iraHoldings').value.trim(),
+    riskTolerance:    qs('iraRisk').value,
+  };
+
+  if (!profile.totalValue || profile.totalValue === '0') {
+    qs('iraTotalValue').focus();
+    qs('iraTotalValue').style.borderColor = '#ff6b6b';
+    setTimeout(() => { qs('iraTotalValue').style.borderColor = ''; }, 1500);
+    return;
+  }
+
+  iraStarted = true;
+  setDisplay('iraResults', 'block');
+  setDisplay('iraVerdict', 'none');
+  qs('iraVerdictContent').textContent = '';
+  setDisplay('iraSpinner', '');
+  qs('iraBtn').disabled    = true;
+  qs('iraBtn').textContent = 'Analyzing...';
+  setText('iraStatusText', 'Analyzing your IRA...');
+
+  let verdictText = '', verdictShown = false;
+
+  try {
+    const response = await fetch(`${BACKEND}/api/ira-advisor`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile }),
+    });
+    if (!response.ok) throw new Error(`Server error: ${response.status}`);
+
+    await readSSE(response, ({ eventType, payload }) => {
+      if (eventType === 'token') {
+        if (!verdictShown) { setDisplay('iraVerdict', 'block'); verdictShown = true; }
+        verdictText += payload.text;
+        qs('iraVerdictContent').textContent = verdictText;
+        qs('iraVerdictContent').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+      } else if (eventType === 'done') {
+        // IRA box always uses a neutral teal border
+        qs('iraVerdict').className = 'verdict-box buy';
+        setText('iraStatusText', 'Your personalized IRA plan is ready');
+        setDisplay('iraSpinner', 'none');
+
+      } else if (eventType === 'error') {
+        throw new Error(payload.message);
+      }
+    });
+  } catch (err) {
+    setText('iraStatusText', 'Error: ' + err.message);
+    setDisplay('iraSpinner', 'none');
+  } finally {
+    qs('iraBtn').disabled    = false;
+    qs('iraBtn').textContent = 'Get IRA Advice — Personalized Plan →';
+  }
 }

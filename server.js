@@ -152,6 +152,39 @@ SENTIMENT:
 `;
 }
 
+// ─── Crypto live data ─────────────────────────────────────────────────────────
+async function fetchCryptoData(symbol) {
+  try {
+    const yf = await getYF();
+    const yfSym = symbol.toUpperCase().replace(/-USD$/i, '') + '-USD';
+    const q = await yf.quote(yfSym);
+    const pricePct52w = q.fiftyTwoWeekHigh
+      ? ((q.regularMarketPrice - q.fiftyTwoWeekLow) / (q.fiftyTwoWeekHigh - q.fiftyTwoWeekLow) * 100)
+      : null;
+    return {
+      price: q.regularMarketPrice, change1dPct: q.regularMarketChangePercent,
+      high52w: q.fiftyTwoWeekHigh, low52w: q.fiftyTwoWeekLow, pricePct52w,
+      mktCap: q.marketCap, volume24h: q.regularMarketVolume,
+    };
+  } catch (e) {
+    console.error(`fetchCryptoData(${symbol}) error:`, e.message);
+    return null;
+  }
+}
+
+function cryptoLiveBlock(d, symbol) {
+  if (!d) return `⚠️ Live data unavailable for ${symbol} — use your knowledge.\n`;
+  return `
+━━━ LIVE CRYPTO DATA (Yahoo Finance) ━━━
+Symbol:     ${symbol}
+Price:      $${fmt(d.price)}  (${fmt(d.change1dPct)}% today)
+52w Range:  $${fmt(d.low52w)} – $${fmt(d.high52w)}  (at ${fmt(d.pricePct52w)}% of range)
+Market Cap: $${fmt(d.mktCap)}
+24h Volume: $${fmt(d.volume24h)}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+}
+
 const BEDROCK_BASE = process.env.ANTHROPIC_BEDROCK_BASE_URL;
 const AUTH_TOKEN   = process.env.ANTHROPIC_AUTH_TOKEN;
 const MODEL        = 'us.anthropic.claude-sonnet-4-6';
@@ -504,6 +537,158 @@ For each pick, also include a "positionSize" recommendation — how many shares 
 Output ONLY a valid JSON array, no markdown fences, no explanation. Keep each field concise — thesis max 2 sentences, catalyst/risk max 15 words each, positionSize max 20 words:
 [{"rank":1,"ticker":"NVDA","company":"Nvidia Corp","sector":"Technology","conviction":"HIGH","thesis":"2 sentences max.","catalyst":"key trigger","risk":"biggest risk","timeframe":"3-12 months","positionSize":"Buy $600-$800 (~4-5 shares). Limit 5% of portfolio."},...]`;
 }
+
+// ─── Crypto prompts ───────────────────────────────────────────────────────────
+
+function cryptoAnalysisPrompt(symbol, live) {
+  return `You are a crypto analyst. Analyze ${symbol} for an individual retail investor.
+
+${cryptoLiveBlock(live, symbol)}
+
+Evaluate across these dimensions:
+1. NETWORK FUNDAMENTALS (35pts): adoption, active addresses, developer activity, transaction volume, protocol utility. Is the network growing?
+2. TOKENOMICS & SUPPLY (25pts): circulating vs max supply, inflation rate, halving schedule if applicable, token unlock schedules, concentration risk (whale wallets).
+3. MARKET STRUCTURE & MOMENTUM (25pts): price vs 52w range (${live ? fmt(live.pricePct52w) + '%' : 'N/A'}), market cap rank, relative strength vs BTC, recent price catalyst.
+4. RISK & REGULATION (15pts): regulatory status in US/EU, exchange listing risk, smart contract/hack history, correlation to equities.
+
+Output:
+COMPOSITE SCORE: [X/100]
+VERDICT: [STRONG BUY / BUY / WATCHLIST / PASS / SELL / STRONG SELL]
+
+DIMENSION SCORES:
+  Network Fundamentals:  [X/35]
+  Tokenomics & Supply:   [X/25]
+  Market Structure:      [X/25]
+  Risk & Regulation:     [X/15]
+
+BULL CASE (2 sentences):
+BEAR CASE (2 sentences):
+
+POSITION SIZING:
+[For a $10k-$25k portfolio — crypto is high risk. Suggested allocation with rationale.]
+
+WHAT TO WATCH:
+- [key metric or event 1]
+- [key metric or event 2]
+- [key metric or event 3]`;
+}
+
+// ─── Crypto endpoint (SSE) ────────────────────────────────────────────────────
+
+app.post('/api/crypto-analyze', async (req, res) => {
+  const { symbol } = req.body;
+  if (!symbol) return res.status(400).json({ error: 'Symbol required' });
+  const s = symbol.trim().toUpperCase();
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  function send(event, data) { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
+
+  try {
+    send('status', { message: `Fetching live data for ${s}...` });
+    const live = await fetchCryptoData(s);
+    if (live) send('live', { price: live.price, change1dPct: live.change1dPct,
+      mktCap: live.mktCap, pricePct52w: live.pricePct52w, high52w: live.high52w, low52w: live.low52w });
+
+    send('status', { message: `Analyzing ${s} across 4 dimensions...` });
+    const analysis = await callClaude([{ role: 'user', content: cryptoAnalysisPrompt(s, live) }], 2000);
+
+    const words = analysis.split(' ');
+    for (const word of words) send('token', { text: word + ' ' });
+    send('done', {});
+  } catch (err) {
+    console.error('Crypto analyze error:', err);
+    send('error', { message: err.message });
+  } finally {
+    res.end();
+  }
+});
+
+// ─── IRA advisor prompt ───────────────────────────────────────────────────────
+
+function iraAdvisorPrompt(profile) {
+  const { accountType, totalValue, cashValue, stocksValue, age, income, riskTolerance, yearsToRetirement, holdings } = profile;
+  const cashPct = totalValue ? ((cashValue / totalValue) * 100).toFixed(1) : 'N/A';
+  return `You are a fiduciary retirement advisor. Give comprehensive, personalized advice for this IRA.
+
+CLIENT PROFILE:
+  Account Type:        ${accountType}
+  Total Value:         $${totalValue}
+  Stocks & Options:    $${stocksValue} (${100 - parseFloat(cashPct)}% of portfolio)
+  Idle Cash:           $${cashValue} (${cashPct}% of portfolio)
+  Current Holdings:    ${holdings || 'Not provided'}
+  Age:                 ${age || 'Not provided'}
+  Annual Income:       ${income || 'Not provided'}
+  Risk Tolerance:      ${riskTolerance || 'Moderate'}
+  Years to Retirement: ${yearsToRetirement || 'Not provided'}
+
+CURRENT MARKET CONTEXT (May 2026):
+  S&P 500: 7,259 · VIX: 17.38 (low fear) · 10yr yield: 4.42% declining
+  Leading: Semiconductors, Technology · Lagging: Energy, Comm Services
+
+━━━ ANALYSIS TASKS ━━━
+
+1. ACCOUNT HEALTH ASSESSMENT
+   - Grade the current setup (A/B/C/D/F) with 1-sentence rationale
+   - Flag any critical issues (idle cash drag, concentration risk, wrong account type)
+
+2. ROTH VS TRADITIONAL RECOMMENDATION
+   - Based on age and income, is Roth the right call? Should they convert, contribute, or both?
+   - 2026 contribution limits: $7,000/year ($8,000 if age 50+), income phase-out for Roth: $150k-$165k single / $236k-$246k married
+
+3. IDLE CASH ACTION PLAN
+   - ${cashPct}% sitting in cash is a drag. What to buy with it RIGHT NOW given the market context?
+   - Suggest specific ETFs or stocks with target allocation percentages.
+
+4. ASSET ALLOCATION RECOMMENDATION
+   - Suggest target allocation (% stocks, % bonds, % international, % alternatives)
+   - Name specific tickers for each bucket, prioritized for tax-advantaged growth
+
+5. TOP 5 PICKS FOR THIS IRA
+   - Best 5 investments specifically for a tax-advantaged retirement account
+   - Prefer: high-growth (compounding tax-free in Roth), dividend growers, REITs (tax-inefficient elsewhere)
+   - Avoid: municipal bonds (already tax-exempt), same positions as taxable account
+
+6. CONTRIBUTION STRATEGY
+   - Should they max out contributions ($7,000/yr)? Priority vs other accounts?
+   - If using Robinhood Gold, the 3% IRA match = $210 free money at max contribution
+
+7. 5-YEAR PROJECTION
+   - At current contribution rate and allocation, what might this account be worth in 5 and 10 years?
+   - Show both conservative (6%) and optimistic (10%) annual return scenarios
+
+Output format — use clear headers for each section. Be specific with tickers and numbers. Be direct about what's wrong and how to fix it.`;
+}
+
+// ─── IRA advisor endpoint ─────────────────────────────────────────────────────
+
+app.post('/api/ira-advisor', async (req, res) => {
+  const { profile } = req.body;
+  if (!profile) return res.status(400).json({ error: 'Profile required' });
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  function send(event, data) { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
+
+  try {
+    send('status', { message: 'Analyzing your IRA...' });
+    const analysis = await callClaude([{ role: 'user', content: iraAdvisorPrompt(profile) }], 3000);
+    const words = analysis.split(' ');
+    for (const word of words) send('token', { text: word + ' ' });
+    send('done', {});
+  } catch (err) {
+    console.error('IRA advisor error:', err);
+    send('error', { message: err.message });
+  } finally {
+    res.end();
+  }
+});
 
 // ─── Portfolio decision endpoint ──────────────────────────────────────────────
 

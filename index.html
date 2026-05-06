@@ -11,14 +11,15 @@
 
   <header>
     <h1>📈 AI Stock Analyzer</h1>
-    <p>4-agent zone out · synthesis zone in · BUY / WATCHLIST / PASS verdict</p>
   </header>
 
   <!-- Tab Switcher -->
   <div class="tabs">
     <button class="tab-btn active" id="tabSingle"    onclick="switchTab('single')">Single Stock</button>
-    <button class="tab-btn"        id="tabPortfolio" onclick="switchTab('portfolio')">Portfolio from CSV</button>
+    <button class="tab-btn"        id="tabPortfolio" onclick="switchTab('portfolio')">Portfolio</button>
     <button class="tab-btn"        id="tabPicks"     onclick="switchTab('picks')">Top 25 Picks</button>
+    <button class="tab-btn"        id="tabCrypto"    onclick="switchTab('crypto')">Crypto</button>
+    <button class="tab-btn"        id="tabIra"       onclick="switchTab('ira')">IRA Advisor</button>
   </div>
 
   <!-- ── Single Stock Panel ────────────────────────────────────────────────── -->
@@ -176,7 +177,104 @@
     </div>
   </div>
 
-  <footer>Built on Albert @berttrading's 5-Prompt Stack · 4-subagent zone out / zone in architecture · Powered by Claude</footer>
+  <!-- ── Crypto Panel ─────────────────────────────────────────────────────────── -->
+  <div id="cryptoPanel" style="display:none;">
+    <div class="input-panel">
+      <h2>Crypto Analysis</h2>
+      <div class="inputs-row">
+        <div class="input-group">
+          <label>Symbol *</label>
+          <input type="text" id="cryptoSymbol" placeholder="e.g. BTC, ETH, SOL" />
+        </div>
+      </div>
+      <button class="analyze-btn" id="cryptoBtn" onclick="runCryptoAnalysis()">
+        Analyze Crypto — AI Deep Dive →
+      </button>
+    </div>
+    <div id="cryptoResults" style="display:none;">
+      <div class="status-bar" id="cryptoStatus">
+        <div class="spinner" id="cryptoSpinner"></div>
+        <span id="cryptoStatusText">Analyzing...</span>
+      </div>
+      <div class="verdict-box" id="cryptoVerdict" style="display:none;">
+        <div class="verdict-header">
+          <span class="verdict-ticker" id="cryptoVerdictTicker"></span>
+          <span class="verdict-badge"  id="cryptoVerdictBadge"></span>
+        </div>
+        <div class="verdict-content" id="cryptoVerdictContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── IRA Advisor Panel ──────────────────────────────────────────────────────── -->
+  <div id="iraPanel" style="display:none;">
+    <div class="input-panel">
+      <h2>IRA Retirement Advisor</h2>
+      <div class="ira-form">
+        <div class="ira-row">
+          <div class="input-group">
+            <label>Account Type</label>
+            <select id="iraType" class="ira-select">
+              <option value="Roth IRA">Roth IRA</option>
+              <option value="Traditional IRA">Traditional IRA</option>
+              <option value="SEP IRA">SEP IRA</option>
+              <option value="Not sure">Not sure</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label>Total IRA Value ($)</label>
+            <input type="text" id="iraTotalValue" placeholder="e.g. 440.74" class="price-input" />
+          </div>
+          <div class="input-group">
+            <label>Idle Cash in IRA ($)</label>
+            <input type="text" id="iraCashValue" placeholder="e.g. 307.92" class="price-input" />
+          </div>
+        </div>
+        <div class="ira-row">
+          <div class="input-group">
+            <label>Your Age</label>
+            <input type="text" id="iraAge" placeholder="e.g. 30" />
+          </div>
+          <div class="input-group">
+            <label>Annual Income ($)</label>
+            <input type="text" id="iraIncome" placeholder="e.g. 85000" class="price-input" />
+          </div>
+          <div class="input-group">
+            <label>Years to Retirement</label>
+            <input type="text" id="iraYears" placeholder="e.g. 30" />
+          </div>
+        </div>
+        <div class="ira-row">
+          <div class="input-group" style="flex:2">
+            <label>Current Holdings (optional)</label>
+            <input type="text" id="iraHoldings" placeholder="e.g. SPY, VOO, some individual stocks" />
+          </div>
+          <div class="input-group">
+            <label>Risk Tolerance</label>
+            <select id="iraRisk" class="ira-select">
+              <option value="Aggressive">Aggressive</option>
+              <option value="Moderate" selected>Moderate</option>
+              <option value="Conservative">Conservative</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <button class="analyze-btn" id="iraBtn" onclick="runIraAdvisor()">
+        Get IRA Advice — Personalized Plan →
+      </button>
+    </div>
+    <div id="iraResults" style="display:none;">
+      <div class="status-bar" id="iraStatus">
+        <div class="spinner" id="iraSpinner"></div>
+        <span id="iraStatusText">Analyzing your IRA...</span>
+      </div>
+      <div class="verdict-box" id="iraVerdict" style="display:none;">
+        <div class="verdict-content" id="iraVerdictContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>Powered by Claude AI · For informational purposes only, not financial advice</footer>
 
 </div>
 <script src="app.js"></script>
