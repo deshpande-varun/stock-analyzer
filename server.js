@@ -501,8 +501,8 @@ For each pick, also include a "positionSize" recommendation — how many shares 
 - Price level: suggest a dollar amount (e.g. "$500-$800 worth") AND approximate share count at current price
 - Include a risk note if position sizing requires extra caution
 
-Output ONLY a valid JSON array, no markdown fences, no explanation:
-[{"rank":1,"ticker":"NVDA","company":"Nvidia Corp","sector":"Technology","conviction":"HIGH","thesis":"2-3 sentences on why buy now","catalyst":"key upcoming event or trigger","risk":"biggest risk in 1 sentence","timeframe":"3-12 months","positionSize":"Buy $600-$800 worth (~4-5 shares at ~$160). High conviction, limit to 5% of portfolio."},...]`;
+Output ONLY a valid JSON array, no markdown fences, no explanation. Keep each field concise — thesis max 2 sentences, catalyst/risk max 15 words each, positionSize max 20 words:
+[{"rank":1,"ticker":"NVDA","company":"Nvidia Corp","sector":"Technology","conviction":"HIGH","thesis":"2 sentences max.","catalyst":"key trigger","risk":"biggest risk","timeframe":"3-12 months","positionSize":"Buy $600-$800 (~4-5 shares). Limit 5% of portfolio."},...]`;
 }
 
 // ─── Portfolio decision endpoint ──────────────────────────────────────────────
@@ -550,11 +550,18 @@ app.post('/api/top-picks', async (req, res) => {
 
     send('status', { message: 'Synthesizing top 25 picks...' });
 
-    const raw = await callClaude([{ role: 'user', content: topPicksSynthPrompt(macro, growth, value) }], 5000);
+    const raw = await callClaude([{ role: 'user', content: topPicksSynthPrompt(macro, growth, value) }], 10000);
 
     const match = raw.match(/\[[\s\S]*\]/);
     if (!match) throw new Error('Could not parse picks from response: ' + raw.slice(0, 200));
-    const picks = JSON.parse(match[0]);
+
+    let picksRaw = match[0];
+    // If the JSON was truncated mid-object, trim to the last complete entry
+    const lastClose = picksRaw.lastIndexOf('}');
+    if (lastClose !== -1 && lastClose < picksRaw.length - 2) {
+      picksRaw = picksRaw.slice(0, lastClose + 1) + ']';
+    }
+    const picks = JSON.parse(picksRaw);
 
     send('picks', { picks });
     send('done', {});
