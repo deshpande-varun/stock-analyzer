@@ -18,6 +18,7 @@ let csvFile              = null;
 let screenshotFiles      = [];
 let portfolioStarted     = false;
 let cryptoStarted        = false;
+let cryptoPicksStarted   = false;
 let iraStarted           = false;
 
 // ── DOM helpers ───────────────────────────────────────────────────────────────
@@ -102,7 +103,8 @@ function switchTab(tab) {
 
   setDisplay('portfolioResults', tab === 'portfolio' ? (portfolioStarted ? '' : 'none') : 'none');
   setDisplay('picksResults',     tab === 'picks'     ? (picksStarted     ? '' : 'none') : 'none');
-  setDisplay('cryptoResults',    tab === 'crypto'    ? (cryptoStarted    ? '' : 'none') : 'none');
+  setDisplay('cryptoResults',       tab === 'crypto' ? (cryptoStarted      ? '' : 'none') : 'none');
+  setDisplay('cryptoPicksResults',  tab === 'crypto' ? (cryptoPicksStarted ? '' : 'none') : 'none');
   setDisplay('iraResults',       tab === 'ira'       ? (iraStarted       ? '' : 'none') : 'none');
 }
 
@@ -803,6 +805,102 @@ async function runCryptoAnalysis() {
 }
 
 qs('cryptoSymbol').addEventListener('keydown', e => { if (e.key === 'Enter') runCryptoAnalysis(); });
+
+function switchCryptoMode(mode) {
+  qs('cryptoModeSingle').classList.toggle('active', mode === 'single');
+  qs('cryptoModeTop25').classList.toggle('active',  mode === 'top25');
+  setDisplay('cryptoSingleMode', mode === 'single' ? '' : 'none');
+  setDisplay('cryptoTop25Mode',  mode === 'top25'  ? '' : 'none');
+}
+
+async function runCryptoTopPicks() {
+  cryptoPicksStarted = true;
+  setDisplay('cryptoPicksResults', '');
+  qs('cryptoPicksGrid').innerHTML   = '';
+  qs('cryptoScreenCards').innerHTML = '';
+  qs('cryptoPicksBtn').disabled     = true;
+  qs('cryptoPicksBtn').textContent  = 'Scanning market...';
+  setDisplay('cryptoPicksSpinner', '');
+  setText('cryptoPicksStatusText', 'Launching 3 crypto screen agents...');
+
+  [
+    { id: 'macro',    emoji: '🌍', label: 'Crypto Macro & Narrative Analysis' },
+    { id: 'bluechip', emoji: '₿',  label: 'Blue Chip Screen (BTC, ETH, SOL...)' },
+    { id: 'growth',   emoji: '🚀', label: 'High Growth & Narrative Screen' },
+  ].forEach(s => {
+    const bodyDiv = el('div', { className: 'screen-card-body', id: 'cscardbody-' + s.id });
+    bodyDiv.appendChild(el('div', { className: 'detail-text', id: 'cscardtext-' + s.id }));
+    const statusSpan = el('span', { id: 'cscardstatus-' + s.id, style: 'color:var(--accent);font-size:0.78rem;' }, '⟳ Running...');
+    const header = el('div', { className: 'screen-card-header', onclick: () => toggleCryptoScreenCard(s.id) });
+    header.appendChild(document.createTextNode(`${s.emoji} ${s.label}`));
+    header.appendChild(statusSpan);
+    const card = el('div', { className: 'screen-card', id: 'cscard-' + s.id }, header, bodyDiv);
+    qs('cryptoScreenCards').appendChild(card);
+  });
+
+  try {
+    const response = await fetch(`${BACKEND}/api/crypto-top-picks`, { method: 'POST' });
+    if (!response.ok) throw new Error(`Server error: ${response.status}`);
+
+    await readSSE(response, ({ eventType, payload }) => {
+      if (eventType === 'status') {
+        setText('cryptoPicksStatusText', payload.message);
+
+      } else if (eventType === 'screen') {
+        qs('cscard-' + payload.agent)?.classList.add('done');
+        const statusEl = qs('cscardstatus-' + payload.agent);
+        if (statusEl) { statusEl.textContent = '✓ complete — click to expand'; statusEl.style.color = 'var(--accent2)'; }
+        const textEl = qs('cscardtext-' + payload.agent);
+        if (textEl) textEl.textContent = payload.result;
+
+      } else if (eventType === 'picks') {
+        renderCryptoTopPicks(payload.picks);
+
+      } else if (eventType === 'done') {
+        setText('cryptoPicksStatusText', 'Crypto scan complete — top 25 picks ready');
+        setDisplay('cryptoPicksSpinner', 'none');
+
+      } else if (eventType === 'error') {
+        throw new Error(payload.message);
+      }
+    });
+  } catch (err) {
+    setText('cryptoPicksStatusText', 'Error: ' + err.message);
+    setDisplay('cryptoPicksSpinner', 'none');
+  } finally {
+    qs('cryptoPicksBtn').disabled    = false;
+    qs('cryptoPicksBtn').textContent = 'Re-run Crypto Scan →';
+  }
+}
+
+function toggleCryptoScreenCard(id) { qs('cscardbody-' + id).classList.toggle('open'); }
+
+function renderCryptoTopPicks(picks) {
+  const grid = qs('cryptoPicksGrid');
+  grid.innerHTML = '';
+  picks.forEach(p => {
+    const meta = el('div', { className: 'pick-meta' },
+      `⚡ Catalyst: ${p.catalyst}  |  ⚠ Risk: ${p.risk}  |  ⏱ ${p.timeframe}`);
+
+    const body = el('div', { className: 'pick-body' },
+      el('div', { className: 'pick-company' }, p.name),
+      el('div', { className: 'pick-sector'  }, p.category),
+      el('div', { className: 'pick-thesis'  }, p.thesis),
+      meta
+    );
+    if (p.positionSize) {
+      body.appendChild(el('div', { className: 'pick-position' }, p.positionSize));
+    }
+
+    const card = el('div', { className: 'pick-card' },
+      el('div', { className: `pick-rank ${p.rank <= 3 ? 'top3' : ''}` }, `#${p.rank}`),
+      el('div', { className: 'pick-ticker' }, p.symbol),
+      body,
+      el('div', { className: `pick-conviction ${p.conviction}` }, p.conviction)
+    );
+    grid.appendChild(card);
+  });
+}
 
 // ── IRA Advisor ───────────────────────────────────────────────────────────────
 async function runIraAdvisor() {

@@ -179,31 +179,63 @@
 
   <!-- ── Crypto Panel ─────────────────────────────────────────────────────────── -->
   <div id="cryptoPanel" style="display:none;">
-    <div class="input-panel">
-      <h2>Crypto Analysis</h2>
-      <div class="inputs-row">
-        <div class="input-group">
-          <label>Symbol *</label>
-          <input type="text" id="cryptoSymbol" placeholder="e.g. BTC, ETH, SOL" />
+
+    <div class="mode-toggle" style="margin-bottom:1.25rem;">
+      <button class="mode-btn active" id="cryptoModeSingle" onclick="switchCryptoMode('single')">🔍 Single Coin</button>
+      <button class="mode-btn"        id="cryptoModeTop25"  onclick="switchCryptoMode('top25')">🏆 Top 25 Picks</button>
+    </div>
+
+    <!-- Single coin -->
+    <div id="cryptoSingleMode">
+      <div class="input-panel">
+        <h2>Crypto Analysis</h2>
+        <div class="inputs-row">
+          <div class="input-group">
+            <label>Symbol *</label>
+            <input type="text" id="cryptoSymbol" placeholder="e.g. BTC, ETH, SOL" />
+          </div>
+        </div>
+        <button class="analyze-btn" id="cryptoBtn" onclick="runCryptoAnalysis()">
+          Analyze Coin — AI Deep Dive →
+        </button>
+      </div>
+      <div id="cryptoResults" style="display:none;">
+        <div class="status-bar" id="cryptoStatus">
+          <div class="spinner" id="cryptoSpinner"></div>
+          <span id="cryptoStatusText">Analyzing...</span>
+        </div>
+        <div class="verdict-box" id="cryptoVerdict" style="display:none;">
+          <div class="verdict-header">
+            <span class="verdict-ticker" id="cryptoVerdictTicker"></span>
+            <span class="verdict-badge"  id="cryptoVerdictBadge"></span>
+          </div>
+          <div class="verdict-content" id="cryptoVerdictContent"></div>
         </div>
       </div>
-      <button class="analyze-btn" id="cryptoBtn" onclick="runCryptoAnalysis()">
-        Analyze Crypto — AI Deep Dive →
+    </div>
+
+    <!-- Top 25 -->
+    <div id="cryptoTop25Mode" style="display:none;">
+      <div class="picks-info-panel">
+        <strong>How this works:</strong> 3 parallel AI agents run a live crypto market scan —
+        macro &amp; narrative analysis, blue chip screen (BTC/ETH/SOL tier), and high-growth
+        altcoin screen. A synthesizer selects the <strong>25 highest-conviction buys</strong>
+        with position sizing based on current crypto market conditions
+        (BTC ~$81k · ETH ~$1,800 · Post-halving bull cycle · Institutional ETF inflows).
+      </div>
+      <button class="picks-btn" id="cryptoPicksBtn" onclick="runCryptoTopPicks()">
+        Run Crypto Market Scan — Find Top 25 →
       </button>
-    </div>
-    <div id="cryptoResults" style="display:none;">
-      <div class="status-bar" id="cryptoStatus">
-        <div class="spinner" id="cryptoSpinner"></div>
-        <span id="cryptoStatusText">Analyzing...</span>
-      </div>
-      <div class="verdict-box" id="cryptoVerdict" style="display:none;">
-        <div class="verdict-header">
-          <span class="verdict-ticker" id="cryptoVerdictTicker"></span>
-          <span class="verdict-badge"  id="cryptoVerdictBadge"></span>
+      <div id="cryptoPicksResults" style="display:none; margin-top:1.5rem;">
+        <div class="status-bar" id="cryptoPicksStatus">
+          <div class="spinner" id="cryptoPicksSpinner"></div>
+          <span id="cryptoPicksStatusText">Scanning crypto market...</span>
         </div>
-        <div class="verdict-content" id="cryptoVerdictContent"></div>
+        <div class="screen-cards" id="cryptoScreenCards"></div>
+        <div class="picks-grid"   id="cryptoPicksGrid"></div>
       </div>
     </div>
+
   </div>
 
   <!-- ── IRA Advisor Panel ──────────────────────────────────────────────────────── -->

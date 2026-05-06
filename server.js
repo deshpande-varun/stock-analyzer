@@ -573,6 +573,156 @@ WHAT TO WATCH:
 - [key metric or event 3]`;
 }
 
+// ─── Crypto Top 25 prompts ────────────────────────────────────────────────────
+
+const LIVE_CRYPTO_CONTEXT = `
+LIVE CRYPTO MARKET DATA (May 2026):
+BTC: ~$81,000 (+2.7% today), dominance ~54%, at 31% of 52w range ($60k–$126k)
+ETH: ~$1,800, major Pectra upgrade shipped, ETH ETF inflows resuming
+Total crypto market cap: ~$2.8T
+BTC Halving: April 2024 (complete) — historically 12-18mo bull run follows
+Macro tailwinds: Fed rate cuts expected, institutional ETF inflows (BlackRock, Fidelity), low VIX 17.38
+Regulatory: SEC softening stance under new administration, spot ETH ETF approved, potential SOL/XRP ETF filings
+On-chain: BTC exchange reserves at multi-year lows (accumulation signal), ETH staking at 28% of supply
+Hot narratives: AI + crypto (FET, NEAR), DePIN (Helium, Render), L2 scaling (ARB, OP), Real World Assets (ONDO, LINK)
+`;
+
+function cryptoMacroScreenPrompt() {
+  return `You are a crypto macro strategist. Analyze the current crypto market environment.
+
+${LIVE_CRYPTO_CONTEXT}
+
+Based on this data:
+- Confirm the crypto market regime (bull/bear/range)
+- Identify the 3 strongest narratives/sectors driving returns right now
+- Identify 2 narratives/sectors to avoid
+- Key macro catalysts for the next 3-6 months
+
+Output format:
+MARKET REGIME: [BULL / BEAR / RANGE]
+BTC CYCLE PHASE: [EARLY BULL / MID BULL / LATE BULL / BEAR / ACCUMULATION]
+
+TOP NARRATIVES TO BUY:
+1. [Narrative] — [1-line reason with live context]
+2. [Narrative] — [1-line reason]
+3. [Narrative] — [1-line reason]
+
+NARRATIVES TO AVOID:
+1. [Narrative] — [1-line reason]
+2. [Narrative] — [1-line reason]
+
+MACRO SUMMARY: [2 sentences on crypto macro outlook]`;
+}
+
+function cryptoBlueChipScreenPrompt() {
+  return `You are a crypto analyst. Identify the best large-cap and mid-cap crypto assets to buy RIGHT NOW.
+
+${LIVE_CRYPTO_CONTEXT}
+
+Screen criteria:
+- Strong network fundamentals (active addresses, developer activity, TVL growing)
+- Sound tokenomics (limited inflation, deflationary or fixed supply)
+- Institutional adoption or ETF pathway
+- Clear utility or dominant market position
+- Focus on: BTC, ETH, SOL, BNB, AVAX, XRP, LINK, DOT, ADA, MATIC/POL
+
+Identify 6-8 assets. For each:
+SYMBOL | NAME | CATEGORY | WHY NOW (1 sentence with live context) | KEY RISK (1 sentence)`;
+}
+
+function cryptoHighGrowthScreenPrompt() {
+  return `You are a crypto analyst specializing in emerging opportunities. Identify the best high-growth altcoins and narrative plays RIGHT NOW.
+
+${LIVE_CRYPTO_CONTEXT}
+
+Screen criteria:
+- Strong alignment with hot narratives: AI+crypto, DePIN, L2 scaling, Real World Assets, GameFi
+- Genuine product traction (users, TVL, revenue, GitHub activity)
+- Upcoming catalysts: mainnet launches, token unlocks ending, major partnerships
+- Risk-adjusted: exclude pure memes with no utility, exit scams, or dead networks
+- Focus on: SUI, TON, APT, ARB, OP, ONDO, RENDER, FET, NEAR, INJ, TIA, JUP
+
+Identify 6-8 assets. For each:
+SYMBOL | NAME | NARRATIVE | WHY NOW (1 sentence) | KEY RISK (1 sentence)`;
+}
+
+function cryptoTopPicksSynthPrompt(macro, blueChip, highGrowth) {
+  return `You are a crypto portfolio manager. Select the 25 best crypto assets to buy RIGHT NOW.
+
+${LIVE_CRYPTO_CONTEXT}
+
+━━━ MACRO ANALYSIS ━━━
+${macro}
+
+━━━ BLUE CHIP SCREEN ━━━
+${blueChip}
+
+━━━ HIGH GROWTH SCREEN ━━━
+${highGrowth}
+
+Select the 25 highest-conviction buys across all market caps. Mix blue chips (safety) and high-growth alts (upside).
+Kill criteria — EXCLUDE any asset with: rug pull risk, dead developer activity, fully diluted valuation >20x market cap with near-term unlocks, or SEC enforcement action pending.
+
+For each pick include a "positionSize" — how much a retail investor with $5,000–$20,000 crypto allocation should put in. Crypto is volatile: size smaller than stocks.
+- HIGH conviction: 5-8% of crypto portfolio
+- MEDIUM: 2-4%
+- LOW / speculative: 0.5-1.5%
+- Always suggest a dollar amount AND note max loss tolerance
+
+Output ONLY a valid JSON array, no markdown fences, no explanation. Keep fields concise — thesis max 2 sentences, catalyst/risk max 15 words, positionSize max 20 words:
+[{"rank":1,"symbol":"BTC","name":"Bitcoin","category":"Store of Value","conviction":"HIGH","thesis":"2 sentences max.","catalyst":"key trigger","risk":"biggest risk","timeframe":"3-12 months","positionSize":"20-25% of crypto budget. Core position, hold through volatility."},...]`;
+}
+
+// ─── Crypto Top 25 endpoint (SSE) ─────────────────────────────────────────────
+
+app.post('/api/crypto-top-picks', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  function send(event, data) { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
+
+  try {
+    send('status', { message: 'Running 3 parallel crypto screens...' });
+
+    const [macro, blueChip, highGrowth] = await Promise.all([
+      callClaude([{ role: 'user', content: cryptoMacroScreenPrompt() }], 1000).then(r => {
+        send('screen', { agent: 'macro',    label: 'Crypto Macro & Narrative Analysis', result: r });
+        return r;
+      }),
+      callClaude([{ role: 'user', content: cryptoBlueChipScreenPrompt() }], 1200).then(r => {
+        send('screen', { agent: 'bluechip', label: 'Blue Chip Screen (BTC, ETH, SOL...)', result: r });
+        return r;
+      }),
+      callClaude([{ role: 'user', content: cryptoHighGrowthScreenPrompt() }], 1200).then(r => {
+        send('screen', { agent: 'growth',   label: 'High Growth & Narrative Screen', result: r });
+        return r;
+      }),
+    ]);
+
+    send('status', { message: 'Synthesizing top 25 crypto picks...' });
+    const raw = await callClaude([{ role: 'user', content: cryptoTopPicksSynthPrompt(macro, blueChip, highGrowth) }], 10000);
+
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) throw new Error('Could not parse picks: ' + raw.slice(0, 200));
+
+    let picksRaw = match[0];
+    const lastClose = picksRaw.lastIndexOf('}');
+    if (lastClose !== -1 && lastClose < picksRaw.length - 2) {
+      picksRaw = picksRaw.slice(0, lastClose + 1) + ']';
+    }
+
+    send('picks', { picks: JSON.parse(picksRaw) });
+    send('done', {});
+  } catch (err) {
+    console.error('Crypto top picks error:', err);
+    send('error', { message: err.message });
+  } finally {
+    res.end();
+  }
+});
+
 // ─── Crypto endpoint (SSE) ────────────────────────────────────────────────────
 
 app.post('/api/crypto-analyze', async (req, res) => {
