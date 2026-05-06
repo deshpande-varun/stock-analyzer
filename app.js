@@ -293,13 +293,56 @@ function onFileChosen() {
 }
 
 function parseCSV(text) {
+  // Normalize line endings and split, handling quoted fields that may contain newlines
+  const normalised = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  // ── Format 1: Robinhood Account Activity CSV ──────────────────────────────
+  // Header: "Activity Date","Process Date","Settle Date","Instrument","Description","Trans Code","Quantity","Price","Amount"
+  if (normalised.includes('"Activity Date"') || normalised.includes('Activity Date')) {
+    const tickers = new Set();
+    // Split on newlines but skip rows that are continuations of quoted fields
+    const rows = [];
+    let current = '';
+    let inQuote = false;
+    for (const ch of normalised) {
+      if (ch === '"') inQuote = !inQuote;
+      if (ch === '\n' && !inQuote) { rows.push(current); current = ''; }
+      else current += ch;
+    }
+    if (current.trim()) rows.push(current);
+
+    for (const row of rows) {
+      if (!row.trim()) continue;
+      // Split CSV fields respecting quotes
+      const fields = [];
+      let f = '', q = false;
+      for (const ch of row) {
+        if (ch === '"') { q = !q; continue; }
+        if (ch === ',' && !q) { fields.push(f.trim()); f = ''; }
+        else f += ch;
+      }
+      fields.push(f.trim());
+
+      const instrument = fields[3];
+      const transCode  = fields[5];
+      if (!instrument || !instrument.match(/^[A-Z]{1,5}$/)) continue;
+      // Only include actual stock buys and holds — skip dividends, transfers, ACH
+      const skip = ['CDIV', 'ACH', 'ITRF', 'DTRF', 'JNLS', 'JNLC', 'RTP', 'ACATS'];
+      if (skip.includes(transCode)) continue;
+      tickers.add(instrument);
+    }
+    return { format: 'activity', tickers: [...tickers] };
+  }
+
+  // ── Format 2: Robinhood 1099 Tax CSV ─────────────────────────────────────
+  // Rows start with "1099-B," and description is at index 5
   const descriptions = new Set();
-  for (const line of text.split('\n').map(l => l.trim()).filter(Boolean)) {
+  for (const line of normalised.split('\n').map(l => l.trim()).filter(Boolean)) {
     if (!line.startsWith('1099-B,')) continue;
     const desc = line.split(',')[5]?.trim();
     if (desc && desc !== 'DESCRIPTION') descriptions.add(desc);
   }
-  return [...descriptions];
+  return { format: '1099', descriptions: [...descriptions] };
 }
 
 // ── Portfolio: screenshot handling ────────────────────────────────────────────
@@ -454,21 +497,30 @@ async function runPortfolioAnalysis() {
   } else {
     if (!csvFile) return;
     setText('portfolioStatusText', 'Reading CSV...');
-    const descriptions = parseCSV(await csvFile.text());
-    if (!descriptions.length) return portfolioError('No stock transactions found. Use a Robinhood Consolidated Transactions CSV.');
+    const parsed = parseCSV(await csvFile.text());
 
-    setText('portfolioStatusText', `Found ${descriptions.length} holding(s) — resolving tickers...`);
-    try {
-      const res  = await fetch(`${BACKEND}/api/extract-tickers`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ descriptions }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      tickers = [...new Set(Object.values(data.mapping || {}))].filter(Boolean);
-      if (!tickers.length) throw new Error('Could not resolve any tickers.');
-    } catch (err) { return portfolioError(err.message); }
+    if (parsed.format === 'activity') {
+      // Account Activity CSV — tickers extracted directly
+      tickers = parsed.tickers;
+      if (!tickers.length) return portfolioError('No stock positions found. The CSV had no Buy/Sell transactions — only dividends or transfers.');
+      setText('portfolioStatusText', `Found ${tickers.length} holding(s): ${tickers.join(', ')}`);
+
+    } else {
+      // 1099 tax CSV — descriptions need AI mapping to tickers
+      if (!parsed.descriptions.length) return portfolioError('No stock transactions found. Upload a Robinhood Account Activity CSV (Account → Statements → Activity) or the 1099 tax CSV.');
+      setText('portfolioStatusText', `Found ${parsed.descriptions.length} position(s) — resolving tickers...`);
+      try {
+        const res  = await fetch(`${BACKEND}/api/extract-tickers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ descriptions: parsed.descriptions }),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        tickers = [...new Set(Object.values(data.mapping || {}))].filter(Boolean);
+        if (!tickers.length) throw new Error('Could not resolve any tickers from the tax CSV.');
+      } catch (err) { return portfolioError(err.message); }
+    }
   }
 
   setText('portfolioStatusText', `Analyzing ${tickers.length} stock(s)...`);
